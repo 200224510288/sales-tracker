@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { SaleBoard, SaleItem } from "@/lib/types";
 import { WEEKDAY_GAMES } from "@/lib/weekdayGames";
 import { getWeekdayIndex, getWeekdayLabel } from "@/lib/dateUtils";
@@ -9,6 +9,9 @@ interface Props {
   dateId: string;
   onAdd: (item: Omit<SaleItem, "id">) => Promise<void>;
 }
+
+// ✅ Shared element type for focus chaining
+type FocusEl = HTMLSelectElement | HTMLInputElement;
 
 export default function SaleEntryForm({ dateId, onAdd }: Props) {
   const [board, setBoard] = useState<SaleBoard>("NLB");
@@ -19,40 +22,33 @@ export default function SaleEntryForm({ dateId, onAdd }: Props) {
   const [error, setError] = useState<string>("");
   const [success, setSuccess] = useState<string>("");
 
-  // 🔹 Refs for focus management
-  const boardRef = useRef<HTMLSelectElement>(null);
-  const codeRef = useRef<HTMLSelectElement>(null);
-  const grossRef = useRef<HTMLInputElement>(null);
-  const deductionRef = useRef<HTMLInputElement>(null);
+  // ✅ Refs MUST allow null in React
+  const boardRef = useRef<HTMLSelectElement | null>(null);
+  const codeRef = useRef<HTMLSelectElement | null>(null);
+  const grossRef = useRef<HTMLInputElement | null>(null);
+  const deductionRef = useRef<HTMLInputElement | null>(null);
 
-  // 🔹 Stable weekday handling (0–6)
+  // ✅ Weekday
   const weekdayIndex = useMemo(() => getWeekdayIndex(dateId), [dateId]);
-  const weekdayLabel = useMemo(
-    () => getWeekdayLabel(weekdayIndex),
-    [weekdayIndex]
-  );
+  const weekdayLabel = useMemo(() => getWeekdayLabel(weekdayIndex), [weekdayIndex]);
 
-  // 🔹 Allowed codes for selected day + board
+  // ✅ Allowed codes for day + board
   const allowedCodes = useMemo(() => {
     return WEEKDAY_GAMES[weekdayIndex]?.[board] ?? [];
   }, [weekdayIndex, board]);
 
-  // 🔹 Reset code when date or board changes
+  // ✅ Reset code when date/board changes
   useEffect(() => {
     setCode("");
   }, [weekdayIndex, board]);
 
-  // 🔹 Calculations & validation
+  // ✅ Calculations & validation
   const net = Math.max(0, gross - deduction);
   const isEmpty = code.trim().length === 0;
   const isNegative = gross < 0 || deduction < 0;
   const exceedsGross = deduction > gross;
 
-  const isValid =
-    !isEmpty &&
-    !isNegative &&
-    !exceedsGross &&
-    (gross > 0 || deduction > 0);
+  const isValid = !isEmpty && !isNegative && !exceedsGross && (gross > 0 || deduction > 0);
 
   async function submit(): Promise<void> {
     setError("");
@@ -74,16 +70,15 @@ export default function SaleEntryForm({ dateId, onAdd }: Props) {
         net,
       });
 
-      // Success feedback
       setSuccess(`✓ Entry added: ${code} - Net: ${net.toFixed(2)}`);
-      
+
       // reset after submit
       setCode("");
       setGross(0);
       setDeduction(0);
-      
-      // Focus back to first field
-      setTimeout(() => {
+
+      // focus back to first field
+      window.setTimeout(() => {
         boardRef.current?.focus();
         setSuccess("");
       }, 2000);
@@ -94,33 +89,34 @@ export default function SaleEntryForm({ dateId, onAdd }: Props) {
     }
   }
 
-  // 🔹 Handle Enter key to move to next field or submit
-  const handleKeyDown = (
-    e: React.KeyboardEvent,
-    nextRef: React.RefObject<HTMLInputElement | HTMLSelectElement> | null
-  ) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      
-      if (nextRef) {
-        // Move to next field
-        setTimeout(() => nextRef.current?.focus(), 0);
-      } else {
-        // Last field - submit form
-        if (isValid && !isLoading) {
-          submit();
-        }
-      }
+  // ✅ Enter key: move focus to next or submit
+  function handleKeyDown(
+    e: React.KeyboardEvent<FocusEl>,
+    nextRef: React.RefObject<FocusEl | null> | null
+  ): void {
+    if (e.key !== "Enter") return;
+
+    e.preventDefault();
+
+    if (nextRef) {
+      // Move to next field
+      window.setTimeout(() => {
+        nextRef.current?.focus();
+      }, 0);
+      return;
     }
-  };
+
+    // Last field -> submit
+    if (isValid && !isLoading) {
+      submit();
+    }
+  }
 
   return (
     <div className="bg-white border border-gray-300 rounded-lg p-8 mb-8 shadow-md">
       {/* Header */}
       <div className="mb-8">
-        <h2 className="text-2xl font-bold text-black mb-2">
-          Add New Entry
-        </h2>
+        <h2 className="text-2xl font-bold text-black mb-2">Add New Entry</h2>
         <p className="text-gray-700 font-medium">
           {weekdayLabel} - {board === "NLB" ? "National Lottery Board" : "Daily Lottery Board"}
         </p>
@@ -142,7 +138,7 @@ export default function SaleEntryForm({ dateId, onAdd }: Props) {
 
       {/* Form Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
-        {/* Board Selection */}
+        {/* Board */}
         <div>
           <label className="block text-sm font-bold text-black mb-3">
             Board <span className="text-blue-600">1</span>
@@ -159,7 +155,7 @@ export default function SaleEntryForm({ dateId, onAdd }: Props) {
           </select>
         </div>
 
-        {/* Code Selection */}
+        {/* Code */}
         <div>
           <label className="block text-sm font-bold text-black mb-3">
             Code <span className="text-blue-600">2</span>
@@ -170,9 +166,7 @@ export default function SaleEntryForm({ dateId, onAdd }: Props) {
             onChange={(e) => setCode(e.target.value)}
             onKeyDown={(e) => handleKeyDown(e, grossRef)}
             className={`w-full px-4 py-3 border-2 rounded-lg text-black font-semibold uppercase text-center bg-white focus:outline-none focus:ring-2 focus:border-transparent transition ${
-              isEmpty && code !== ""
-                ? "border-red-400 focus:ring-red-500"
-                : "border-gray-300 focus:ring-blue-500"
+              isEmpty && code !== "" ? "border-red-400 focus:ring-red-500" : "border-gray-300 focus:ring-blue-500"
             }`}
           >
             <option value="">Select Code</option>
@@ -184,7 +178,7 @@ export default function SaleEntryForm({ dateId, onAdd }: Props) {
           </select>
         </div>
 
-        {/* Gross Amount */}
+        {/* Gross */}
         <div>
           <label className="block text-sm font-bold text-black mb-3">
             Gross Sale <span className="text-blue-600">3</span>
@@ -202,7 +196,7 @@ export default function SaleEntryForm({ dateId, onAdd }: Props) {
           />
         </div>
 
-        {/* Deduction/Return */}
+        {/* Return */}
         <div>
           <label className="block text-sm font-bold text-black mb-3">
             Return <span className="text-blue-600">4</span>
@@ -211,33 +205,27 @@ export default function SaleEntryForm({ dateId, onAdd }: Props) {
             ref={deductionRef}
             type="number"
             value={deduction || ""}
-            onChange={(e) =>
-              setDeduction(Math.max(0, Number(e.target.value) || 0))
-            }
+            onChange={(e) => setDeduction(Math.max(0, Number(e.target.value) || 0))}
             onKeyDown={(e) => handleKeyDown(e, null)}
             placeholder="0.00"
             min="0"
             step="0.01"
             className={`w-full px-4 py-3 border-2 rounded-lg text-black font-semibold text-right bg-white focus:outline-none focus:ring-2 focus:border-transparent transition ${
-              exceedsGross
-                ? "border-red-400 focus:ring-red-500"
-                : "border-gray-300 focus:ring-blue-500"
+              exceedsGross ? "border-red-400 focus:ring-red-500" : "border-gray-300 focus:ring-blue-500"
             }`}
           />
         </div>
 
-        {/* Net Amount (Display) */}
+        {/* Net */}
         <div>
-          <label className="block text-sm font-bold text-black mb-3">
-            Net Amount
-          </label>
+          <label className="block text-sm font-bold text-black mb-3">Net Amount</label>
           <div className="w-full px-4 py-3 border-2 border-blue-300 rounded-lg text-black font-bold text-right bg-blue-50">
             {net.toFixed(2)}
           </div>
         </div>
       </div>
 
-      {/* Submit Button */}
+      {/* Submit */}
       <div className="flex gap-3">
         <button
           onClick={submit}
@@ -252,16 +240,28 @@ export default function SaleEntryForm({ dateId, onAdd }: Props) {
         </button>
       </div>
 
-      {/* Helper Text */}
+      {/* Helper */}
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mt-6">
         <p className="text-gray-800 text-sm font-medium mb-2">
-          <span className="font-bold">📋 Step-by-Step Flow:</span>
+          <span className="font-bold">Step-by-Step Flow:</span>
         </p>
         <ul className="text-gray-700 text-sm space-y-1">
-          <li>✓ <span className="font-semibold">Step 1:</span> Select Board → Press <span className="font-bold">Enter</span></li>
-          <li>✓ <span className="font-semibold">Step 2:</span> Select Code → Press <span className="font-bold">Enter</span></li>
-          <li>✓ <span className="font-semibold">Step 3:</span> Enter Gross Sale → Press <span className="font-bold">Enter</span></li>
-          <li>✓ <span className="font-semibold">Step 4:</span> Enter Return → Press <span className="font-bold">Enter</span> to Submit</li>
+          <li>
+            ✓ <span className="font-semibold">Step 1:</span> Select Board → Press{" "}
+            <span className="font-bold">Enter</span>
+          </li>
+          <li>
+            ✓ <span className="font-semibold">Step 2:</span> Select Code → Press{" "}
+            <span className="font-bold">Enter</span>
+          </li>
+          <li>
+            ✓ <span className="font-semibold">Step 3:</span> Enter Gross Sale → Press{" "}
+            <span className="font-bold">Enter</span>
+          </li>
+          <li>
+            ✓ <span className="font-semibold">Step 4:</span> Enter Return → Press{" "}
+            <span className="font-bold">Enter</span> to Submit
+          </li>
         </ul>
       </div>
     </div>
