@@ -123,6 +123,12 @@ export default function DailyOverview() {
           >
             Enter Sales
           </Link>
+          <Link
+  href={`/commission?date=${dateId}`}
+  className="px-5 py-2 rounded font-bold bg-blue-600 text-white hover:bg-blue-700 transition-colors text-center"
+>
+  Commission
+</Link>
         </div>
       </div>
 
