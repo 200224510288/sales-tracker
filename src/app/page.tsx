@@ -1,114 +1,359 @@
 "use client";
 
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+
 import DailyOverview from "@/components/DailyOverview";
 import RequireAuth from "@/components/RequireAuth";
 import LogoutButton from "@/components/LogoutButton";
 
+import {
+  listDailyTotals,
+  listDailyTotalsByCode,
+  type DailyTotalPoint,
+  type DailyCodePoint
+} from "@/lib/sales";
+
+import { kmeans, type KMeansResult } from "@/lib/kmeans";
+
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  CartesianGrid,
+  ReferenceLine,
+  ScatterChart,
+  Scatter,
+  Legend
+} from "recharts";
+
+/* ---------------- helpers ---------------- */
+
+function shortDate(dateId: string): string {
+  const m = dateId.slice(5, 7);
+  const d = dateId.slice(8, 10);
+  return `${m}/${d}`;
+}
+
+function formatNumber(v: number): string {
+  return new Intl.NumberFormat("en-US").format(v);
+}
+
+function isWeekend(dateId: string): boolean {
+  const d = new Date(dateId);
+  const day = d.getDay();
+  return day === 0 || day === 6;
+}
+
+function dayOfWeek(dateId: string): number {
+  const d = new Date(dateId);
+  return d.getDay();
+}
+
+/* ---------------- page ---------------- */
+
 export default function Home() {
-  const features = [
-    { id: "entry", icon: "📊", title: "Data Entry", description: "Simple and efficient sales data entry system" },
-    { id: "summary", icon: "📈", title: "Summaries", description: "Real-time totals for NLB and DLB" },
-    { id: "template", icon: "⚡", title: "Templates", description: "Quick load all daily lottery codes" },
-    { id: "edit", icon: "✏️", title: "Editing", description: "Edit entries directly in the table" },
-    { id: "export", icon: "📄", title: "Reports", description: "Export professional PDF reports" },
-    { id: "history", icon: "📅", title: "History", description: "Access sales data from any date" },
-  ];
+
+  /* ================= SALES TREND ================= */
+
+  const [trend, setTrend] = useState<DailyTotalPoint[]>([]);
+  const [trendLoading, setTrendLoading] = useState(true);
+
+  useEffect(() => {
+    async function load() {
+      const data = await listDailyTotals();
+      setTrend(data);
+      setTrendLoading(false);
+    }
+    load();
+  }, []);
+
+  const chartData = useMemo(() => {
+
+    const MAX = 60;
+
+    const slice =
+      trend.length > MAX
+        ? trend.slice(trend.length - MAX)
+        : trend;
+
+    return slice.map((p) => ({
+      dateId: p.dateId,
+      label: shortDate(p.dateId),
+      totalQty: p.totalQty
+    }));
+
+  }, [trend]);
+
+  const weekendMarkers = useMemo(() => {
+    return chartData
+      .filter((x) => isWeekend(x.dateId))
+      .map((x) => x.label);
+  }, [chartData]);
+
+  /* ================= KMEANS ================= */
+
+  const [clusterCode, setClusterCode] = useState("");
+  const [kValue, setKValue] = useState(3);
+
+  const [series, setSeries] = useState<DailyCodePoint[]>([]);
+  const [clusterRes, setClusterRes] = useState<KMeansResult | null>(null);
+  const [clusterLoading, setClusterLoading] = useState(false);
+
+  async function runClustering() {
+
+    setClusterLoading(true);
+
+    const data = await listDailyTotalsByCode(clusterCode);
+    setSeries(data);
+
+    const X = data.map((p) => [
+      p.qty,
+      dayOfWeek(p.dateId),
+      isWeekend(p.dateId) ? 1 : 0
+    ]);
+
+    const result = kmeans(X, kValue);
+
+    setClusterRes(result);
+
+    setClusterLoading(false);
+  }
+
+  const clusterChartData = useMemo(() => {
+
+    if (!clusterRes) return [];
+
+    return series.map((p, i) => ({
+      qty: p.qty,
+      dow: dayOfWeek(p.dateId),
+      cluster: clusterRes.labels[i],
+      dateId: p.dateId
+    }));
+
+  }, [series, clusterRes]);
+
+  /* ================= UI ================= */
 
   return (
     <RequireAuth>
+
       <main className="min-h-screen bg-white">
-        {/* Header */}
+
+        {/* HEADER */}
+
         <div className="bg-blue-900 text-white">
-          <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-12 md:py-14">
-<div className="flex flex-col md:flex-row md:items-end md:justify-between gap-6">
-                <div>
-                <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold mb-3">
-                  Lottery Sales Management
+
+          <div className="max-w-6xl mx-auto px-6 py-12">
+
+            <div className="flex justify-between items-end">
+
+              <div>
+
+                <h1 className="text-4xl font-bold mb-3">
+                  Lottery Sales Dashboard
                 </h1>
-                <p className="text-base sm:text-lg md:text-xl text-blue-100 max-w-2xl">
-                  Quick daily overview for owners and a simple sales entry workflow for staff.
+
+                <p className="text-blue-100">
+                  Analytics, trends and ML insights
                 </p>
+
               </div>
 
-              <Link
-                href="/sales"
-                className="w-full md:w-auto px-6 py-3 bg-white text-blue-900 font-bold rounded hover:bg-blue-50 transition-colors text-center"
-              >
-                Go to Sales Entry
-              </Link>
-            </div>
               <LogoutButton />
+
+            </div>
+
           </div>
+
         </div>
 
-        {/* Main Content */}
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-10 md:py-12">
-          {/* Owner Overview at Top */}
+        {/* CONTENT */}
+
+        <div className="max-w-6xl mx-auto px-6 py-12">
+
+          {/* DAILY OVERVIEW */}
+
           <DailyOverview />
 
-          {/* Features Grid */}
-          <section className="mb-12 md:mb-14">
-            <h2 className="text-2xl md:text-3xl font-bold text-gray-900 mb-8 md:mb-10">
-              Features
+          {/* ================= SALES TREND ================= */}
+
+          <section className="mt-12">
+
+            <h2 className="text-2xl font-bold mb-4">
+              Sales Trend
             </h2>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-8">
-              {features.map((feature) => (
-                <div
-                  key={feature.id}
-                  className="bg-white border border-gray-200 rounded-lg p-4 md:p-6 hover:shadow-md transition-shadow"
-                >
-                  <div className="text-4xl mb-3">{feature.icon}</div>
-                  <h3 className="text-lg font-bold text-gray-900 mb-2">{feature.title}</h3>
-                  <p className="text-gray-600 text-sm">{feature.description}</p>
-                </div>
-              ))}
+            <div className="bg-white border rounded-xl p-6 shadow-sm">
+
+              <div className="h-72">
+
+                {trendLoading ? (
+                  <div className="flex items-center justify-center h-full">
+                    Loading...
+                  </div>
+                ) : (
+
+                  <ResponsiveContainer width="100%" height="100%">
+
+                    <LineChart data={chartData}>
+
+                      <CartesianGrid strokeDasharray="3 3" />
+
+                      <XAxis dataKey="label" />
+
+                      <YAxis />
+
+                      <Tooltip
+                        formatter={(v) => [formatNumber(Number(v)), "Sales"]}
+                      />
+
+                      {weekendMarkers.map((m, i) => (
+                        <ReferenceLine
+                          key={i}
+                          x={m}
+                          stroke="red"
+                          strokeDasharray="3 3"
+                        />
+                      ))}
+
+                      <Line
+                        dataKey="totalQty"
+                        stroke="#1e40af"
+                        strokeWidth={2}
+                        dot={false}
+                      />
+
+                    </LineChart>
+
+                  </ResponsiveContainer>
+
+                )}
+
+              </div>
+
             </div>
+
           </section>
 
-          {/* How It Works */}
-          <section className="mb-12 md:mb-14 bg-gray-50 rounded-lg border border-gray-200 p-6 md:p-8">
-            <h2 className="text-2xl md:text-3xl font-bold text-gray-900 mb-8 md:mb-10">
-              How It Works
+          {/* ================= KMEANS ================= */}
+
+          <section className="mt-16">
+
+            <h2 className="text-2xl font-bold mb-4">
+              K-Means Lottery Pattern Detection
             </h2>
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-6 md:gap-8">
-              {[
-                { step: "1", title: "Select Date", desc: "Choose the date for your sales" },
-                { step: "2", title: "Load Template", desc: "Load daily lottery codes" },
-                { step: "3", title: "Enter Sales", desc: "Input sales amounts" },
-                { step: "4", title: "Export Report", desc: "Generate PDF report" },
-              ].map((item, idx) => (
-                <div key={idx} className="text-center">
-                  <div className="mx-auto w-12 h-12 bg-blue-900 text-white rounded-full flex items-center justify-center mb-3 md:mb-4 font-bold text-lg">
-                    {item.step}
+            <div className="bg-white border rounded-xl p-6 shadow-sm">
+
+              {/* controls */}
+
+              <div className="flex gap-3 mb-6">
+
+                <input
+                  value={clusterCode}
+                  onChange={(e) => setClusterCode(e.target.value)}
+                  placeholder="Lottery code (MSE etc)"
+                  className="border px-4 py-2 rounded"
+                />
+
+                <select
+                  value={kValue}
+                  onChange={(e) => setKValue(Number(e.target.value))}
+                  className="border px-3 py-2 rounded"
+                >
+                  {[2,3,4,5].map(k => (
+                    <option key={k}>{k}</option>
+                  ))}
+                </select>
+
+                <button
+                  onClick={runClustering}
+                  className="bg-blue-900 text-white px-5 py-2 rounded font-bold"
+                >
+                  {clusterLoading ? "Running..." : "Run Clustering"}
+                </button>
+
+              </div>
+
+              {/* chart */}
+
+              <div className="h-80">
+
+                {!clusterRes ? (
+                  <div className="flex items-center justify-center h-full text-gray-500">
+                    Run clustering to visualize patterns
                   </div>
-                  <h3 className="font-bold text-gray-900 mb-2">{item.title}</h3>
-                  <p className="text-gray-600 text-sm">{item.desc}</p>
-                </div>
-              ))}
+                ) : (
+
+                  <ResponsiveContainer width="100%" height="100%">
+
+                    <ScatterChart>
+
+                      <CartesianGrid />
+
+                      <XAxis
+                        dataKey="dow"
+                        name="Day"
+                        type="number"
+                        domain={[0,6]}
+                      />
+
+                      <YAxis
+                        dataKey="qty"
+                        name="Qty"
+                      />
+
+                      <Tooltip
+                        formatter={(v) => [formatNumber(Number(v)), "Qty"]}
+                      />
+
+                      <Legend />
+
+                      {Array.from(
+                        { length: clusterRes.centroids.length }
+                      ).map((_, c) => (
+
+                        <Scatter
+                          key={c}
+                          name={`Cluster ${c}`}
+                          data={clusterChartData.filter(d => d.cluster === c)}
+                        />
+
+                      ))}
+
+                    </ScatterChart>
+
+                  </ResponsiveContainer>
+
+                )}
+
+              </div>
+
             </div>
+
           </section>
 
           {/* CTA */}
-          <section className="text-center">
+
+          <section className="text-center mt-16">
+
             <Link
               href="/sales"
-              className="w-full sm:w-auto inline-block px-8 py-3 bg-blue-900 text-white font-bold rounded hover:bg-blue-800 transition-colors"
+              className="bg-blue-900 text-white px-8 py-3 rounded font-bold"
             >
-              Go to Sales Entry
+              Go To Sales Entry
             </Link>
+
           </section>
+
         </div>
 
-        {/* Footer */}
-        <div className="bg-gray-50 border-t border-gray-200 mt-10">
-          <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 text-center text-gray-600 text-sm">
-            <p>Professional Lottery Sales Management System</p>
-          </div>
-        </div>
       </main>
+
     </RequireAuth>
   );
 }

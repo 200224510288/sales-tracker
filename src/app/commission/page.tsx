@@ -3,10 +3,32 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { SaleItem } from "@/lib/types";
-import { getSaleItems, getMonthlyCommissionSummaryByMonth } from "@/lib/sales";
+import {
+  getSaleItems,
+  getMonthlyCommissionSummaryByMonth,
+  getMonthlyReturnSummaryByMonth,
+} from "@/lib/sales";
 import { getLocalISODate } from "@/lib/date";
 
 const COMMISSION_PER_TICKET = 0.5;
+
+type MonthlyCommissionSummary = {
+  monthId: string; // YYYY-MM
+  nlbQty: number;
+  dlbQty: number;
+  totalQty: number;
+};
+
+type MonthlyReturnSummary = {
+  monthId: string; // YYYY-MM
+  nlbGross: number;
+  dlbGross: number;
+  totalGross: number;
+  nlbReturn: number; // deduction
+  dlbReturn: number; // deduction
+  totalReturn: number; // deduction
+  returnPct: number; // totalReturn/totalGross*100
+};
 
 function formatCurrency(value: number): string {
   return new Intl.NumberFormat("en-US", {
@@ -26,24 +48,24 @@ function formatDisplayDate(dateStr: string): string {
 }
 
 function monthIdFromDateId(dateId: string): string {
-  return dateId.slice(0, 7); // YYYY-MM-DD -> YYYY-MM
+  return dateId.slice(0, 7);
 }
 
 export default function CommissionPage() {
   // ---- state
   const [dateId, setDateId] = useState<string>(getLocalISODate());
-  const [monthId, setMonthId] = useState<string>(monthIdFromDateId(getLocalISODate()));
+  const [monthId, setMonthId] = useState<string>(
+    monthIdFromDateId(getLocalISODate())
+  );
 
   const [dailyItems, setDailyItems] = useState<SaleItem[]>([]);
   const [dailyLoading, setDailyLoading] = useState<boolean>(true);
   const [dailyError, setDailyError] = useState<string>("");
 
-  const [monthly, setMonthly] = useState<{
-    monthId: string;
-    nlbQty: number;
-    dlbQty: number;
-    totalQty: number;
-  } | null>(null);
+  const [monthly, setMonthly] = useState<MonthlyCommissionSummary | null>(null);
+  const [monthlyReturn, setMonthlyReturn] = useState<MonthlyReturnSummary | null>(
+    null
+  );
   const [monthlyLoading, setMonthlyLoading] = useState<boolean>(true);
   const [monthlyError, setMonthlyError] = useState<string>("");
 
@@ -66,11 +88,14 @@ export default function CommissionPage() {
       try {
         setDailyError("");
         setDailyLoading(true);
+
         const items = await getSaleItems(dateId);
         if (!cancelled) setDailyItems(items);
       } catch (err) {
         if (!cancelled) {
-          setDailyError(err instanceof Error ? err.message : "Failed to load daily commission");
+          setDailyError(
+            err instanceof Error ? err.message : "Failed to load daily commission"
+          );
           setDailyItems([]);
         }
       } finally {
@@ -84,7 +109,7 @@ export default function CommissionPage() {
     };
   }, [dateId]);
 
-  // ---- load monthly
+  // ---- load monthly (commission + returns)
   useEffect(() => {
     let cancelled = false;
 
@@ -92,12 +117,21 @@ export default function CommissionPage() {
       try {
         setMonthlyError("");
         setMonthlyLoading(true);
+
         const m = await getMonthlyCommissionSummaryByMonth(monthId);
-        if (!cancelled) setMonthly(m);
+        const r = await getMonthlyReturnSummaryByMonth(monthId);
+
+        if (!cancelled) {
+          setMonthly(m);
+          setMonthlyReturn(r);
+        }
       } catch (err) {
         if (!cancelled) {
-          setMonthlyError(err instanceof Error ? err.message : "Failed to load monthly commission");
+          setMonthlyError(
+            err instanceof Error ? err.message : "Failed to load monthly commission"
+          );
           setMonthly(null);
+          setMonthlyReturn(null);
         }
       } finally {
         if (!cancelled) setMonthlyLoading(false);
@@ -112,8 +146,14 @@ export default function CommissionPage() {
 
   // ---- compute daily summary (net = quantity)
   const daily = useMemo(() => {
-    const nlbQty = dailyItems.filter((x) => x.board === "NLB").reduce((s, x) => s + x.net, 0);
-    const dlbQty = dailyItems.filter((x) => x.board === "DLB").reduce((s, x) => s + x.net, 0);
+    const nlbQty = dailyItems
+      .filter((x) => x.board === "NLB")
+      .reduce((s, x) => s + x.net, 0);
+
+    const dlbQty = dailyItems
+      .filter((x) => x.board === "DLB")
+      .reduce((s, x) => s + x.net, 0);
+
     const totalQty = nlbQty + dlbQty;
 
     return {
@@ -126,7 +166,7 @@ export default function CommissionPage() {
     };
   }, [dailyItems]);
 
-  // ---- compute monthly summary (already aggregated)
+  // ---- compute monthly summary (commission)
   const monthlyComputed = useMemo(() => {
     const nlbQty = monthly?.nlbQty ?? 0;
     const dlbQty = monthly?.dlbQty ?? 0;
@@ -143,6 +183,19 @@ export default function CommissionPage() {
     };
   }, [monthly, monthId]);
 
+  // ---- compute monthly returns
+  const monthlyReturnComputed = useMemo(() => {
+    const totalGross = monthlyReturn?.totalGross ?? 0;
+    const totalReturn = monthlyReturn?.totalReturn ?? 0;
+    const returnPct = monthlyReturn?.returnPct ?? 0;
+
+    // Optional: board-level (if you want later)
+    const nlbReturn = monthlyReturn?.nlbReturn ?? 0;
+    const dlbReturn = monthlyReturn?.dlbReturn ?? 0;
+
+    return { totalGross, totalReturn, returnPct, nlbReturn, dlbReturn };
+  }, [monthlyReturn]);
+
   // ---- breakdown rows (daily)
   const rows = useMemo(() => {
     return dailyItems
@@ -157,8 +210,8 @@ export default function CommissionPage() {
   }, [dailyItems]);
 
   return (
-<main className="max-w-7xl mx-auto p-6 bg-white min-h-screen">
-          {/* Header */}
+    <main className="max-w-7xl mx-auto p-6 bg-white min-h-screen">
+      {/* Header */}
       <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Commission Dashboard</h1>
@@ -187,7 +240,9 @@ export default function CommissionPage() {
       <div className="mt-6 bg-white border border-gray-200 rounded-xl shadow-sm">
         <div className="p-5 border-b border-gray-100">
           <h2 className="text-lg font-bold text-gray-900">Filters</h2>
-          <p className="text-sm text-gray-600 mt-1">Select a day for daily breakdown, and a month for monthly totals.</p>
+          <p className="text-sm text-gray-600 mt-1">
+            Select a day for daily breakdown, and a month for monthly totals.
+          </p>
         </div>
 
         <div className="p-5 grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -234,7 +289,6 @@ export default function CommissionPage() {
                 onChange={(e) => {
                   const v = e.target.value;
                   setDateId(v);
-                  // optional: auto-align month selector to the same month
                   setMonthId(v.slice(0, 7));
                 }}
                 className="w-full px-4 py-2 border border-gray-300 rounded-md font-semibold text-gray-900 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
@@ -337,7 +391,9 @@ export default function CommissionPage() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-3">
           <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
             <p className="text-sm font-bold text-gray-600 uppercase mb-2">NLB</p>
-            <p className="text-3xl font-bold text-gray-900">{monthlyLoading ? "…" : monthlyComputed.nlbQty}</p>
+            <p className="text-3xl font-bold text-gray-900">
+              {monthlyLoading ? "…" : monthlyComputed.nlbQty}
+            </p>
             <p className="text-xs text-gray-500 mt-2">Monthly quantity</p>
             <p className="mt-3 text-sm font-bold text-green-700">
               Commission: Rs {monthlyLoading ? "…" : formatCurrency(monthlyComputed.nlbCommission)}
@@ -346,7 +402,9 @@ export default function CommissionPage() {
 
           <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
             <p className="text-sm font-bold text-gray-600 uppercase mb-2">DLB</p>
-            <p className="text-3xl font-bold text-gray-900">{monthlyLoading ? "…" : monthlyComputed.dlbQty}</p>
+            <p className="text-3xl font-bold text-gray-900">
+              {monthlyLoading ? "…" : monthlyComputed.dlbQty}
+            </p>
             <p className="text-xs text-gray-500 mt-2">Monthly quantity</p>
             <p className="mt-3 text-sm font-bold text-green-700">
               Commission: Rs {monthlyLoading ? "…" : formatCurrency(monthlyComputed.dlbCommission)}
@@ -355,11 +413,35 @@ export default function CommissionPage() {
 
           <div className="bg-indigo-900 text-white rounded-xl shadow-sm p-6">
             <p className="text-sm font-bold text-indigo-100 uppercase mb-2">Total</p>
-            <p className="text-3xl font-bold">{monthlyLoading ? "…" : monthlyComputed.totalQty}</p>
+            <p className="text-3xl font-bold">
+              {monthlyLoading ? "…" : monthlyComputed.totalQty}
+            </p>
             <p className="text-xs text-indigo-200 mt-2">Monthly total quantity</p>
             <p className="mt-3 text-sm font-bold text-emerald-200">
               Commission: Rs {monthlyLoading ? "…" : formatCurrency(monthlyComputed.totalCommission)}
             </p>
+          </div>
+        </div>
+
+        {/* ✅ NEW: Monthly Returns + Return % */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+          <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
+            <p className="text-sm font-bold text-gray-600 uppercase mb-2">Monthly Returns</p>
+            <p className="text-3xl font-bold text-gray-900">
+              {monthlyLoading ? "…" : monthlyReturnComputed.totalReturn}
+            </p>
+            <p className="text-xs text-gray-500 mt-2">Return quantity (Deduction)</p>
+            <p className="mt-3 text-sm font-semibold text-gray-700">
+              Total Gross: {monthlyLoading ? "…" : monthlyReturnComputed.totalGross}
+            </p>
+          </div>
+
+          <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
+            <p className="text-sm font-bold text-gray-600 uppercase mb-2">Return Percentage</p>
+            <p className="text-3xl font-bold text-gray-900">
+              {monthlyLoading ? "…" : `${monthlyReturnComputed.returnPct.toFixed(2)}%`}
+            </p>
+            <p className="text-xs text-gray-500 mt-2">(Total Return / Total Gross) × 100</p>
           </div>
         </div>
       </div>
@@ -406,7 +488,9 @@ export default function CommissionPage() {
                     <td className="px-6 py-3 font-semibold text-gray-900">{r.board}</td>
                     <td className="px-6 py-3 text-gray-800">{r.code}</td>
                     <td className="px-6 py-3 font-semibold text-gray-900">{r.qty}</td>
-                    <td className="px-6 py-3 font-bold text-green-700">{formatCurrency(r.commission)}</td>
+                    <td className="px-6 py-3 font-bold text-green-700">
+                      {formatCurrency(r.commission)}
+                    </td>
                   </tr>
                 ))
               )}
@@ -414,7 +498,6 @@ export default function CommissionPage() {
           </table>
         </div>
 
-        {/* Footer summary line */}
         <div className="px-6 py-4 border-t border-gray-100 bg-gray-50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
           <p className="text-sm font-semibold text-gray-800">
             Daily total commission:{" "}

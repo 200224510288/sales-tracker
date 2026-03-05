@@ -176,3 +176,131 @@ export async function getMonthlyCommissionSummaryByMonth(monthId: string): Promi
 
   return { monthId, nlbQty, dlbQty, totalQty: nlbQty + dlbQty };
 }
+
+
+export async function getMonthlyReturnSummaryByMonth(monthId: string): Promise<{
+  monthId: string;
+  nlbGross: number;
+  dlbGross: number;
+  totalGross: number;
+  nlbReturn: number; // deduction
+  dlbReturn: number; // deduction
+  totalReturn: number; // deduction
+  returnPct: number; // totalReturn / totalGross * 100
+}> {
+  const start = `${monthId}-01`;
+
+  const [yStr, mStr] = monthId.split("-");
+  const y = Number(yStr);
+  const m = Number(mStr); // 1..12
+  const next = new Date(y, m, 1);
+  const endExclusive = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-01`;
+
+  const daysQ = query(collection(db, "salesDays"), orderBy("date", "asc"));
+  const daySnap = await getDocs(daysQ);
+
+  let nlbGross = 0;
+  let dlbGross = 0;
+  let nlbReturn = 0;
+  let dlbReturn = 0;
+
+  for (const dayDoc of daySnap.docs) {
+    const day = dayDoc.data() as { date?: string };
+    if (!day.date) continue;
+
+    if (day.date < start || day.date >= endExclusive) continue;
+
+    const itemsSnap = await getDocs(collection(db, "salesDays", dayDoc.id, "items"));
+    itemsSnap.forEach((itemDoc) => {
+      const x = itemDoc.data() as Omit<SaleItem, "id">;
+
+      const gross = Number(x.gross || 0);
+      const ret = Number(x.deduction || 0); // ✅ return qty
+
+      if (x.board === "NLB") {
+        nlbGross += gross;
+        nlbReturn += ret;
+      } else if (x.board === "DLB") {
+        dlbGross += gross;
+        dlbReturn += ret;
+      }
+    });
+  }
+
+  const totalGross = nlbGross + dlbGross;
+  const totalReturn = nlbReturn + dlbReturn;
+  const returnPct = totalGross > 0 ? (totalReturn / totalGross) * 100 : 0;
+
+  return {
+    monthId,
+    nlbGross,
+    dlbGross,
+    totalGross,
+    nlbReturn,
+    dlbReturn,
+    totalReturn,
+    returnPct,
+  };
+}
+
+export type DailyTotalPoint = {
+  dateId: string;     // YYYY-MM-DD
+  totalQty: number;   // sum(net)
+};
+
+export async function listDailyTotals(): Promise<DailyTotalPoint[]> {
+  const daysQ = query(collection(db, "salesDays"), orderBy("date", "asc"));
+  const daySnap = await getDocs(daysQ);
+
+  const points: DailyTotalPoint[] = [];
+
+  // NOTE: This is N+1 reads (one per day). Fine for small/medium datasets.
+  for (const dayDoc of daySnap.docs) {
+    const day = dayDoc.data() as { date?: string };
+    const dateId = day.date ?? dayDoc.id; // fallback to doc id if needed
+
+    const itemsSnap = await getDocs(collection(db, "salesDays", dayDoc.id, "items"));
+
+    let totalQty = 0;
+    itemsSnap.forEach((itemDoc) => {
+      const x = itemDoc.data() as Omit<SaleItem, "id">;
+      totalQty += Number(x.net || 0); // ✅ net = quantity
+    });
+
+    points.push({ dateId, totalQty });
+  }
+
+  return points;
+}
+
+export type DailyCodePoint = {
+  dateId: string;   // YYYY-MM-DD
+  qty: number;      // sum(net) for that code on that date
+};
+
+export async function listDailyTotalsByCode(code: string): Promise<DailyCodePoint[]> {
+  const daysQ = query(collection(db, "salesDays"), orderBy("date", "asc"));
+  const daySnap = await getDocs(daysQ);
+
+  const points: DailyCodePoint[] = [];
+
+  for (const dayDoc of daySnap.docs) {
+    const day = dayDoc.data() as { date?: string };
+    const dateId = day.date ?? dayDoc.id;
+
+    const itemsSnap = await getDocs(collection(db, "salesDays", dayDoc.id, "items"));
+
+    let qty = 0;
+    itemsSnap.forEach((itemDoc) => {
+      const x = itemDoc.data() as Omit<SaleItem, "id">;
+      if ((x.code || "").trim().toUpperCase() === code.trim().toUpperCase()) {
+        qty += Number(x.net || 0); // ✅ net = quantity
+      }
+    });
+
+    // Keep zero days too (helps patterns). If you want only non-zero, add: if (qty > 0)
+    points.push({ dateId, qty });
+  }
+
+  return points;
+}
